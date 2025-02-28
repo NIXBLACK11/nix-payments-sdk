@@ -1,0 +1,31 @@
+{
+  "name": "@nixblack/nix-payments-sdk",
+  "version": "1.0.11",
+  "description": "A React SDK for integrating NIX Payments",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc"
+  },
+  "keywords": [
+    "solana",
+    "payments",
+    "react",
+    "wallet",
+    "web3"
+  ],
+  "author": "nixblack",
+  "license": "ISC",
+  "dependencies": {
+    "@solana/spl-token": "^0.4.12",
+    "@solana/wallet-adapter-react": "^0.15.35",
+    "@solana/wallet-adapter-react-ui": "^0.9.35",
+    "@solana/web3.js": "^1.98.0",
+    "bs58": "^6.0.0",
+    "react": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.10",
+    "typescript": "^5.7.3"
+  }
+}
