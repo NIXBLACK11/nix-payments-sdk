@@ -1,6 +1,6 @@
 {
   "name": "@nixblack/nix-payments-sdk",
-  "version": "1.0.12",
+  "version": "1.0.13",
   "description": "A React SDK for integrating NIX Payments",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
