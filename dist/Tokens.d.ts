@@ -22,5 +22,11 @@ export declare const Tokens: {
         mint: string;
         decimal: number;
     };
+    USDT: {
+        name: string;
+        image: string;
+        mint: string;
+        decimal: number;
+    };
 };
 //# sourceMappingURL=Tokens.d.ts.map
