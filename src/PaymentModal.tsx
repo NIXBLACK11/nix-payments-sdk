@@ -1,11 +1,11 @@
 import { useMemo } from 'react';
 import { ConnectionProvider, WalletProvider } from '@solana/wallet-adapter-react';
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui';
-import { clusterApiUrl } from '@solana/web3.js';
+import { clusterApiUrl, Transaction } from '@solana/web3.js';
 import { WalletMultiButton } from "@solana/wallet-adapter-react-ui";
 import { useEffect, useState } from "react";
 import { PublicKey, Connection, VersionedTransaction } from "@solana/web3.js";
-import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID } from "@solana/spl-token";
+import { getAssociatedTokenAddress, TOKEN_PROGRAM_ID, ASSOCIATED_TOKEN_PROGRAM_ID, createTransferInstruction } from "@solana/spl-token";
 import { useWallet } from "@solana/wallet-adapter-react";
 
 import bs58 from "bs58";
@@ -20,7 +20,7 @@ interface PaymentModalProps {
 }
 
 export const PaymentModalComponent: React.FC<PaymentModalProps> = ({ sessionId, RPC_URL, onRedirect }) => {
-    const { publicKey, signTransaction } = useWallet();
+    const { publicKey, signTransaction, sendTransaction } = useWallet();
     const [loading, setLoading] = useState(false);
     const [email, setEmail] = useState("");
     const [saasLogoURL, setSaasLogoURL] = useState("");
@@ -69,77 +69,116 @@ export const PaymentModalComponent: React.FC<PaymentModalProps> = ({ sessionId, 
             const customerAccount = publicKey;
             const merchantAccount = new PublicKey(merchantWalletAddress);
 
-            const merchantUSDCTokenAccount = await getAssociatedTokenAddress(
-                USDC_MINT,
-                merchantAccount,
-                true,
-                TOKEN_PROGRAM_ID,
-                ASSOCIATED_TOKEN_PROGRAM_ID
-            );
+            if (selectedToken === "USDC") {
+                const senderTokenAddress = await getAssociatedTokenAddress(USDC_MINT, customerAccount);
+                const receiverTokenAddress = await getAssociatedTokenAddress(USDC_MINT, merchantAccount);
 
-            console.log("Merchant USDC Token Account:", merchantUSDCTokenAccount.toBase58());
+                const transaction = new Transaction().add(
+                    createTransferInstruction(
+                        senderTokenAddress,
+                        receiverTokenAddress,
+                        publicKey,
+                        pricing * 10 ** Tokens[selectedToken].decimal, // Convert USDC amount to smallest unit (assuming 6 decimals)
+                        [],
+                        TOKEN_PROGRAM_ID
+                    )
+                );
 
-            const quoteResponse = await fetch(
-                `https://api.jup.ag/swap/v1/quote?inputMint=${tokenMintAddress}&outputMint=${USDC_MINT.toBase58()}&amount=${pricing * 1e6}&slippageBps=50&swapMode=ExactOut`
-            ).then(res => res.json());
+                const signature = await sendTransaction(transaction, connection);
+                const latestBlockhash = await connection.getLatestBlockhash();
+                await connection.confirmTransaction(
+                    { signature, ...latestBlockhash },
+                    "finalized"
+                );
+                console.log(signature);
 
-            console.log("Swap Quote:", quoteResponse);
-            if (!quoteResponse.routePlan) {
-                throw new Error("Invalid quote response. Check token selection and balance.");
+                const response = await verifyPayment(
+                    sessionId,
+                    signature,
+                    publicKey.toString()
+                );
+                if (!response) {
+                    alert('Corrupted payment');
+                    return;
+                }
+
+                alert('Payment Successful!');
+                setTimeout(() => {
+                    onRedirect();
+                }, 3000);
+            } else {
+                const merchantUSDCTokenAccount = await getAssociatedTokenAddress(
+                    USDC_MINT,
+                    merchantAccount,
+                    true,
+                    TOKEN_PROGRAM_ID,
+                    ASSOCIATED_TOKEN_PROGRAM_ID
+                );
+
+                console.log("Merchant USDC Token Account:", merchantUSDCTokenAccount.toBase58());
+
+                const quoteResponse = await fetch(
+                    `https://api.jup.ag/swap/v1/quote?inputMint=${tokenMintAddress}&outputMint=${USDC_MINT.toBase58()}&amount=${pricing * 1e6}&slippageBps=50&swapMode=ExactOut`
+                ).then(res => res.json());
+
+                console.log("Swap Quote:", quoteResponse);
+                if (!quoteResponse.routePlan) {
+                    throw new Error("Invalid quote response. Check token selection and balance.");
+                }
+
+                const swapResponse = await fetch("https://api.jup.ag/swap/v1/swap", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                        quoteResponse: quoteResponse, // Make sure this is formatted correctly
+                        userPublicKey: customerAccount.toBase58(),
+                        destinationTokenAccount: merchantUSDCTokenAccount.toBase58(),
+                        wrapAndUnwrapSol: true,
+                    }),
+                }).then(res => res.json());
+
+                console.log("Swap Response:", swapResponse);
+                if (!swapResponse.swapTransaction) {
+                    throw new Error("Invalid swap response. Check parameters.");
+                }
+
+                const transactionBase64 = swapResponse.swapTransaction;
+                console.log("Transaction->", transactionBase64);
+                const transaction = VersionedTransaction.deserialize(Buffer.from(transactionBase64, "base64"));
+
+                const signedTransaction = await signTransaction(transaction);
+                const transactionBinary = signedTransaction.serialize();
+
+                // Send transaction
+                const signature = await connection.sendRawTransaction(transactionBinary, {
+                    maxRetries: 10,
+                    preflightCommitment: "finalized"
+                });
+                console.log(`Transaction Sent: https://solscan.io/tx/${signature}/`);
+
+                // Confirm transaction (Fixed)
+                const confirmation = await connection.confirmTransaction(signature, "finalized");
+                if (confirmation.value.err) {
+                    throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
+                }
+
+                console.log(`Transaction Successful: https://solscan.io/tx/${signature}/`);
+
+                const signature1 = bs58.encode(signedTransaction.signatures[0]);
+                console.log("Transaction Signature:", signature1);
+                console.log(signature, signature1);
+
+                const response = await verifyPayment(sessionId, signature1, publicKey.toString());
+                if (!response) {
+                    alert('Corrupted payment');
+                    return;
+                }
+
+                alert("Payment Successful!");
+                setTimeout(() => {
+                    onRedirect();
+                }, 3000);
             }
-
-            const swapResponse = await fetch("https://api.jup.ag/swap/v1/swap", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                    quoteResponse: quoteResponse, // Make sure this is formatted correctly
-                    userPublicKey: customerAccount.toBase58(),
-                    destinationTokenAccount: merchantUSDCTokenAccount.toBase58(),
-                    wrapAndUnwrapSol: true,
-                }),
-            }).then(res => res.json());
-
-            console.log("Swap Response:", swapResponse);
-            if (!swapResponse.swapTransaction) {
-                throw new Error("Invalid swap response. Check parameters.");
-            }
-
-            const transactionBase64 = swapResponse.swapTransaction;
-            console.log("Transaction->", transactionBase64);
-            const transaction = VersionedTransaction.deserialize(Buffer.from(transactionBase64, "base64"));
-
-            const signedTransaction = await signTransaction(transaction);
-            const transactionBinary = signedTransaction.serialize();
-
-            // Send transaction
-            const signature = await connection.sendRawTransaction(transactionBinary, {
-                maxRetries: 10,
-                preflightCommitment: "finalized"
-            });
-            console.log(`Transaction Sent: https://solscan.io/tx/${signature}/`);
-
-            // Confirm transaction (Fixed)
-            const confirmation = await connection.confirmTransaction(signature, "finalized");
-            if (confirmation.value.err) {
-                throw new Error(`Transaction failed: ${JSON.stringify(confirmation.value.err)}`);
-            }
-
-            console.log(`Transaction Successful: https://solscan.io/tx/${signature}/`);
-
-            const signature1 = bs58.encode(signedTransaction.signatures[0]);
-            console.log("Transaction Signature:", signature1);
-            console.log(signature, signature1);
-
-            const response = await verifyPayment(sessionId, signature1, publicKey.toString());
-            if (!response) {
-                alert('Corrupted payment');
-                return;
-            }
-
-            alert("Payment Successful!");
-            setTimeout(() => {
-                onRedirect();
-            }, 3000);
         } catch (err) {
             console.error("Payment Error:", err);
             alert("Payment Failed!");
@@ -204,7 +243,6 @@ export const PaymentModalComponent: React.FC<PaymentModalProps> = ({ sessionId, 
                             >
                                 <option value="">Select Token</option>
                                 {Object.entries(Tokens)
-                                    .filter(([key]) => key !== "USDC")
                                     .map(([key, token]) => (
                                         <option key={key} value={key}>
                                             {token.name}
