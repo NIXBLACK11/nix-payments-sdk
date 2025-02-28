@@ -269,7 +269,7 @@ export const PaymentModalComponent: React.FC<PaymentModalProps> = ({ sessionId, 
 
                         <div className="space-y-4">
                             <div className="text-sm text-gray-600">
-                                {`By subscribing, you agree to {saasName}'s Terms of Use and Privacy Policy.`}
+                                `By subscribing, you agree to {saasName}'s Terms of Use and Privacy Policy.`
                             </div>
 
                             {(loading == true) ?
